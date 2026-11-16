@@ -1,0 +1,59 @@
+name: Build PowerPoint Verse APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract zip and find project
+        run: |
+          echo "Files in repo:"
+          find . -type f -not -path "./.git/*" | head -50
+          ZIP=$(find . -iname "*.zip" -not -path "./.git/*" | sort -V | tail -1)
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: no zip file found in the repo"
+            exit 1
+          fi
+          echo "Using zip: $ZIP"
+          mkdir -p src_unzipped
+          unzip -q "$ZIP" -x '__MACOSX/*' -d src_unzipped
+          PUBSPEC=$(find src_unzipped -name "pubspec.yaml" | head -1)
+          if [ -z "$PUBSPEC" ]; then
+            echo "ERROR: pubspec.yaml not found inside the zip"
+            exit 1
+          fi
+          echo "PROJECT_DIR=$(cd "$(dirname "$PUBSPEC")" && pwd)" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Prepare Android project (name, permissions, JS library)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: bash setup_android.sh
+
+      - name: Build release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          cp "$PROJECT_DIR"/build/app/outputs/flutter-apk/app-release.apk dist/PowerPoint-Verse.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PowerPoint-Verse-apk
+          path: dist/PowerPoint-Verse.apk
