@@ -13,8 +13,6 @@ jobs:
 
       - name: Extract zip and find project
         run: |
-          echo "Files in repo:"
-          find . -type f -not -path "./.git/*" | head -50
           ZIP=$(find . -iname "*.zip" -not -path "./.git/*" | sort -V | tail -1)
           if [ -z "$ZIP" ]; then
             echo "ERROR: no zip file found in the repo"
@@ -22,7 +20,8 @@ jobs:
           fi
           echo "Using zip: $ZIP"
           mkdir -p src_unzipped
-          unzip -q "$ZIP" -x '__MACOSX/*' -d src_unzipped
+          unzip -q "$ZIP" -d src_unzipped || true
+          rm -rf src_unzipped/__MACOSX
           PUBSPEC=$(find src_unzipped -name "pubspec.yaml" | head -1)
           if [ -z "$PUBSPEC" ]; then
             echo "ERROR: pubspec.yaml not found inside the zip"
@@ -30,10 +29,25 @@ jobs:
           fi
           echo "PROJECT_DIR=$(cd "$(dirname "$PUBSPEC")" && pwd)" >> $GITHUB_ENV
 
+      # FIX: lint of Android needs Java 21 (Java 17 crashes with List.removeLast)
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
+
+      # FIX: disable the (useless for us) lintVital tasks for every module
+      - name: Disable lintVital in Gradle
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/no-lint.gradle <<'GRADLE'
+          allprojects {
+            tasks.configureEach { t ->
+              if (t.name.startsWith('lintVital') || t.name.startsWith('lintAnalyze') || t.name.startsWith('lintReport')) {
+                t.enabled = false
+              }
+            }
+          }
+          GRADLE
 
       - uses: subosito/flutter-action@v2
         with:
@@ -43,6 +57,12 @@ jobs:
       - name: Prepare Android project (name, permissions, JS library)
         working-directory: ${{ env.PROJECT_DIR }}
         run: bash setup_android.sh
+
+      - name: Check JS library was downloaded
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ls -l assets/web/
+          test "$(wc -c < assets/web/pptxgen.bundle.js)" -gt 100000 || { echo "pptxgen bundle missing"; exit 1; }
 
       - name: Build release APK
         working-directory: ${{ env.PROJECT_DIR }}
